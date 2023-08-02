@@ -79,8 +79,8 @@ class FullDenoisingDiffusion(pl.LightningModule):
             self.noise_model = DiscreteUniformTransition(output_dims=self.output_dims,
                                                          cfg=cfg)
         elif cfg.model.transition == 'marginal':
-            print(f"Marginal distribution of the classes: nodes: {self.dataset_infos.atom_types} --"
-                  f" edges: {self.dataset_infos.edge_types} -- charges: {self.dataset_infos.charges_marginals}")
+            #print(f"Marginal distribution of the classes: nodes: {self.dataset_infos.atom_types} --"
+            #      f" edges: {self.dataset_infos.edge_types} -- charges: {self.dataset_infos.charges_marginals}")
 
             self.noise_model = MarginalUniformTransition(x_marginals=self.dataset_infos.atom_types,
                                                          e_marginals=self.dataset_infos.edge_types,
@@ -365,7 +365,7 @@ class FullDenoisingDiffusion(pl.LightningModule):
 
     @torch.no_grad()
     def sample_batch(self, n_nodes: list, number_chain_steps: int = 50, batch_id: int = 0, keep_chain: int = 0,
-                     save_final: int = 0, test=True):
+                     save_final: int = 0, test=True, silvr_func=None):
         """
         :param batch_id: int
         :param n_nodes: list of int containing the number of nodes to sample for each graph
@@ -375,14 +375,14 @@ class FullDenoisingDiffusion(pl.LightningModule):
         :param keep_chain_steps: number of timesteps to save for each chain
         :return: molecule_list. Each element of this list is a tuple (atom_types, charges, positions)
         """
-        print(f"Sampling a batch with {len(n_nodes)} graphs. Saving {save_final} visualization and {keep_chain} full chains.")
+        #print(f"Sampling a batch with {len(n_nodes)} graphs. Saving {save_final} visualization and {keep_chain} full chains.")
         assert keep_chain >= 0
         assert save_final >= 0
-        n_nodes = torch.Tensor(n_nodes).long().to(self.device)
+        n_nodes = torch.Tensor(n_nodes).long().to(self.device)#
         batch_size = len(n_nodes)
         n_max = torch.max(n_nodes).item()
         # Build the masks
-        arange = torch.arange(n_max, device=self.device).unsqueeze(0).expand(batch_size, -1)
+        arange = torch.arange(n_max, device=self.device).unsqueeze(0).expand(batch_size, -1)#
         node_mask = arange < n_nodes.unsqueeze(1)
         # Sample noise  -- z has size (n_samples, n_nodes, n_features)
         z_T = self.noise_model.sample_limit_dist(node_mask=node_mask)
@@ -402,6 +402,17 @@ class FullDenoisingDiffusion(pl.LightningModule):
             s_array = s_int * torch.ones((batch_size, 1), dtype=torch.long, device=z_t.X.device)
 
             z_s = self.sample_zs_from_zt(z_t=z_t, s_int=s_array)
+            
+            #----------SILVR--------------
+            if silvr_func:
+                alpha_bar=self.noise_model.get_alpha_bar(t_int=torch.tensor(s_int))
+                sigma_bar=self.noise_model.get_sigma_bar(t_int=torch.tensor(s_int))         
+                z_s = silvr_func(z_s,
+                                 s_int=s_int,
+                                 alpha_bar=alpha_bar,
+                                 sigma_bar=sigma_bar,
+                                 noise_model=self.noise_model)#Pass all information that might be needed for SILVR
+            #-----------------------------
 
             # Save the first keep_chain graphs
             if (s_int * number_chain_steps) % self.T == 0:
@@ -434,25 +445,25 @@ class FullDenoisingDiffusion(pl.LightningModule):
                                           bond_types=edge_types, positions=conformer,
                                           atom_decoder=self.dataset_infos.atom_decoder))
 
-        # Visualize chains
-        if keep_chain > 0:
-            self.print('Batch sampled. Visualizing chains starts!')
-            chains_path = os.path.join(os.getcwd(), f'chains/epoch{self.current_epoch}/',
-                                       f'batch{batch_id}_GR{self.global_rank}')
-            os.makedirs(chains_path, exist_ok=True)
+        # Visualize chains - This code doesn't work for some reason
+        #if keep_chain > 0:
+        #    self.print('Batch sampled. Visualizing chains starts!')
+        #    chains_path = os.path.join(os.getcwd(), f'chains/epoch{self.current_epoch}/',
+        #                               f'batch{batch_id}_GR{self.global_rank}')
+        #    os.makedirs(chains_path, exist_ok=True)
 
-            visualizer.visualize_chains(chains_path, chains,
-                                        num_nodes=n_nodes[:keep_chain],
-                                        atom_decoder=self.dataset_infos.atom_decoder)
+        #    visualizer.visualize_chains(chains_path, chains,
+        #                                num_nodes=n_nodes[:keep_chain],
+        #                                atom_decoder=self.dataset_infos.atom_decoder)
 
-        if save_final > 0:
-            self.print(f'Visualizing {save_final} individual molecules...')
+        #if save_final > 0:
+        #    self.print(f'Visualizing {save_final} individual molecules...')
 
         # Visualize the final molecules
-        current_path = os.getcwd()
-        result_path = os.path.join(current_path, f'graphs/epoch{self.current_epoch}_b{batch_id}/')
-        _ = visualizer.visualize(result_path, molecule_list, num_molecules_to_visualize=save_final)
-        self.print("Visualizing done.")
+        #current_path = os.getcwd()
+        #result_path = os.path.join(current_path, f'graphs/epoch{self.current_epoch}_b{batch_id}/')
+        #_ = visualizer.visualize(result_path, molecule_list, num_molecules_to_visualize=save_final)
+        #self.print("Visualizing done.")
         return molecule_list
 
     def sample_zs_from_zt(self, z_t, s_int):
@@ -473,7 +484,7 @@ class FullDenoisingDiffusion(pl.LightningModule):
         # The first graphs are sampled without sorting the sizes, so that the visualizations are not biased
         first_sampling = min(samples_to_generate, max(samples_to_save, chains_to_save))
         if first_sampling > 0:
-            n_nodes = self.node_dist.sample_n(first_sampling, self.device)
+            n_nodes = self.node_dist.sample_n(first_sampling, self.device)#
             current_max_size = 0
             current_n_list = []
             for i, n in enumerate(n_nodes):
@@ -502,7 +513,7 @@ class FullDenoisingDiffusion(pl.LightningModule):
                 return samples
 
         # The remaining graphs are sampled in decreasing graph size
-        n_nodes = self.node_dist.sample_n(samples_to_generate - first_sampling, self.device)
+        n_nodes = self.node_dist.sample_n(samples_to_generate - first_sampling, self.device)#
 
         if self.cfg.dataset.adaptive_loader:
             n_nodes = torch.sort(n_nodes, descending=True)[0]

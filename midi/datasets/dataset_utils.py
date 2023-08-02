@@ -54,7 +54,7 @@ def load_pickle(path):
 class Statistics:
     def __init__(self, num_nodes, atom_types, bond_types, charge_types, valencies, bond_lengths, bond_angles):
         self.num_nodes = num_nodes
-        print("NUM NODES IN STATISTICS", num_nodes)
+        #print("NUM NODES IN STATISTICS", num_nodes)
         self.atom_types = atom_types
         self.bond_types = bond_types
         self.charge_types = charge_types

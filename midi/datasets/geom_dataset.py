@@ -1,7 +1,11 @@
+#Modification by Benoît BAILLIF
+#https://github.com/cvignac/MiDi/issues/3
+
 import collections
 import os
 import pathlib
 import pickle
+import json
 
 from rdkit import Chem, RDLogger
 from tqdm import tqdm
@@ -19,13 +23,38 @@ from midi.datasets.dataset_utils import load_pickle, save_pickle
 from midi.datasets.abstract_dataset import AbstractDatasetInfos, AbstractAdaptiveDataModule
 from midi.metrics.metrics_utils import compute_all_statistics
 
+ROOT_DIRPATH = "/home/nruncie/Documents/smidi/MiDi/data"
+
+if not os.path.exists(ROOT_DIRPATH):
+    os.mkdir(ROOT_DIRPATH)
+
+GEOM_DIRNAME = 'geom'#GEOM
+GEOM_DIRPATH = os.path.join(ROOT_DIRPATH,
+                            GEOM_DIRNAME)
+
+GEOM_RDKIT_DIRNAME = 'rdkit_folder'
+GEOM_RDKIT_DIRPATH = os.path.join(GEOM_DIRPATH,
+                                  GEOM_RDKIT_DIRNAME)
+
+GEOM_DRUGS_DIRNAME = 'drugs'
+GEOM_DRUGS_SUMMARY_FILENAME = 'summary_drugs.json'
+GEOM_DRUGS_SUMMARY_FILEPATH = os.path.join(ROOT_DIRPATH,
+                                           GEOM_DIRNAME,
+                                           GEOM_RDKIT_DIRNAME,
+                                           GEOM_DRUGS_SUMMARY_FILENAME)
 
 full_atom_encoder = {'H': 0, 'B': 1, 'C': 2, 'N': 3, 'O': 4, 'F': 5, 'Al': 6, 'Si': 7,
                      'P': 8, 'S': 9, 'Cl': 10, 'As': 11, 'Br': 12, 'I': 13, 'Hg': 14, 'Bi': 15}
 
 
 class GeomDrugsDataset(InMemoryDataset):
-    def __init__(self, split, root, remove_h, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, 
+                 split, 
+                 root, 
+                 remove_h,
+                 transform=None, 
+                 pre_transform=None, 
+                 pre_filter=None):
         assert split in ['train', 'val', 'test']
         self.split = split
         self.remove_h = remove_h
@@ -33,6 +62,8 @@ class GeomDrugsDataset(InMemoryDataset):
         self.atom_encoder = full_atom_encoder
         if remove_h:
             self.atom_encoder = {k: v - 1 for k, v in self.atom_encoder.items() if k != 'H'}
+        
+        root = "/home/nruncie/Documents/MiDi/data" #Me again
 
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
@@ -52,11 +83,14 @@ class GeomDrugsDataset(InMemoryDataset):
             # This is my laptop
             return ['subset.pickle']
         if self.split == 'train':
-            return ['train_data.pickle']
+            return ['train_smiles.txt']
+            # return ['train_data.pickle']
         elif self.split == 'val':
-            return ['val_data.pickle']
+            return ['val_smiles.txt']
+            # return ['val_data.pickle']
         else:
-            return ['test_data.pickle']
+            return ['test_smiles.txt']
+            # return ['test_data.pickle']
 
     @property
     def processed_file_names(self):
@@ -75,31 +109,85 @@ class GeomDrugsDataset(InMemoryDataset):
                     f'test_angles_{h}.npy', 'test_smiles.pickle']
 
     def download(self):
+        #return
+        #removed this for debugging
+        
         raise ValueError('Download and preprocessing is manual. If the data is already downloaded, '
                          f'check that the paths are correct. Root dir = {self.root} -- raw files {self.raw_paths}')
+        
 
+    # def process(self):
+    #     RDLogger.DisableLog('rdApp.*')
+        
+    #     all_data = load_pickle(self.raw_paths[0])
+        
+    #     data_list = []
+    #     all_smiles = []
+    #     for i, data in enumerate(tqdm(all_data)):
+    #         smiles, all_conformers = data
+    #         all_smiles.append(smiles)
+    #         for j, conformer in enumerate(all_conformers):
+    #             if j >= 5:
+    #                 break
+    #             data = dataset_utils.mol_to_torch_geometric(conformer, full_atom_encoder, smiles)
+    #             if self.remove_h:
+    #                 data = dataset_utils.remove_hydrogens(data)
+
+    #             if self.pre_filter is not None and not self.pre_filter(data):
+    #                 continue
+    #             if self.pre_transform is not None:
+    #                 data = self.pre_transform(data)
+
+    #             data_list.append(data)
+
+    #     torch.save(self.collate(data_list), self.processed_paths[0])
+
+    #     statistics = compute_all_statistics(data_list, self.atom_encoder, charges_dic={-2: 0, -1: 1, 0: 2,
+    #                                                                                    1: 3, 2: 4, 3: 5})
+    #     save_pickle(statistics.num_nodes, self.processed_paths[1])
+    #     np.save(self.processed_paths[2], statistics.atom_types)
+    #     np.save(self.processed_paths[3], statistics.bond_types)
+    #     np.save(self.processed_paths[4], statistics.charge_types)
+    #     save_pickle(statistics.valencies, self.processed_paths[5])
+    #     save_pickle(statistics.bond_lengths, self.processed_paths[6])
+    #     np.save(self.processed_paths[7], statistics.bond_angles)
+    #     save_pickle(set(all_smiles), self.processed_paths[8])
+    #     torch.save(self.collate(data_list), self.processed_paths[0])
+        
+        
     def process(self):
         RDLogger.DisableLog('rdApp.*')
-        all_data = load_pickle(self.raw_paths[0])
-
+        
+        with open(self.raw_paths[0], 'r') as f:
+            all_smiles = [line.strip() for line in f.readlines()]
+        
+        with open(GEOM_DRUGS_SUMMARY_FILEPATH, 'r') as f:
+            self.summary = json.load(f)
+        
         data_list = []
-        all_smiles = []
-        for i, data in enumerate(tqdm(all_data)):
-            smiles, all_conformers = data
-            all_smiles.append(smiles)
-            for j, conformer in enumerate(all_conformers):
-                if j >= 5:
-                    break
-                data = dataset_utils.mol_to_torch_geometric(conformer, full_atom_encoder, smiles)
-                if self.remove_h:
-                    data = dataset_utils.remove_hydrogens(data)
+        for i, smiles in enumerate(tqdm(all_smiles)):
+            
+            d = self.summary[smiles]
+            if 'pickle_path' in d:
+                pickle_path = d['pickle_path']
+                pickle_filepath = os.path.join(GEOM_RDKIT_DIRPATH,
+                                            pickle_path)
+                with open(pickle_filepath, 'rb') as f:
+                    geom_entry = pickle.load(f)
+                
+                for geom_conformer in geom_entry['conformers'][:5]:
+                    conformer = geom_conformer['rd_mol']
+                
+                    data = dataset_utils.mol_to_torch_geometric(conformer, full_atom_encoder, smiles)
+                    if self.remove_h:
+                        data = dataset_utils.remove_hydrogens(data)
 
-                if self.pre_filter is not None and not self.pre_filter(data):
-                    continue
-                if self.pre_transform is not None:
-                    data = self.pre_transform(data)
+                    if self.pre_filter is not None and not self.pre_filter(data):
+                        continue
+                    if self.pre_transform is not None:
+                        data = self.pre_transform(data)
 
-                data_list.append(data)
+                    data_list.append(data)
 
         torch.save(self.collate(data_list), self.processed_paths[0])
 
@@ -119,8 +207,10 @@ class GeomDrugsDataset(InMemoryDataset):
 class GeomDataModule(AbstractAdaptiveDataModule):
     def __init__(self, cfg):
         self.datadir = cfg.dataset.datadir
-        base_path = pathlib.Path(get_original_cwd()).parents[0]
-        root_path = os.path.join(base_path, self.datadir)
+        # I modified the geom.yaml configuration to take absolute path
+        # base_path = pathlib.Path(get_original_cwd()).parents[0]
+        # root_path = os.path.join(base_path, self.datadir)
+        root_path = self.datadir
 
         train_dataset = GeomDrugsDataset(split='train', root=root_path, remove_h=cfg.dataset.remove_h)
         val_dataset = GeomDrugsDataset(split='val', root=root_path, remove_h=cfg.dataset.remove_h)
